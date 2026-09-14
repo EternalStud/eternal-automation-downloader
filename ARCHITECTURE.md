@@ -191,4 +191,25 @@ To deliver content completely and reliably when standard generic scrapers fail:
    - Preserves formatting and splits along natural boundaries (paragraphs `\n\n`, sentences `.\n`, spaces).
    - Long captions are sent as clear, readable companion text messages immediately accompanying the media album.
 
+---
+
+### 9. Dual-Repository Public Release & Sanitization Architecture (`sync_public.sh`)
+
+To enable open sharing while keeping production infrastructure secure, the codebase is partitioned into a dual-repository model:
+
+1. **Private Production Engine (`eternal-automation-bot`)**:
+   - Contains operational credentials, live subscriber records (`users.json`), server connection parameters, Cloudflare Zero Trust tunnel endpoints, and admin dispatchers.
+   - Deployed directly to the Samsung Galaxy M31 phone server (`ssh phone`).
+
+2. **Public Open-Source Release (`eternal-automation-downloader`)**:
+   - Hosted publicly on GitHub: [`https://github.com/EternalStud/eternal-automation-downloader`](https://github.com/EternalStud/eternal-automation-downloader).
+   - Clean git history with a single orphan initial commit, stripping historical commit metadata and author email logs.
+   - Neutral configuration defaults with environment variable fallbacks for `BOT_TOKEN`, `OWNER_ID`, `UPI_ID`, and `ADMIN_HANDLE`.
+
+3. **Automated Sanitization Pipeline (`scripts/sync_public.sh`)**:
+   - Synchronizes Python source modules, scripts, tests, and user documentation.
+   - Purges personal Telegram IDs, handles, UPI accounts, and server hostnames.
+   - Executes verification test suites before staging or pushing to GitHub.
+   - Supports 1-command updates: `bash scripts/sync_public.sh --push "Commit message"`.
+
 
