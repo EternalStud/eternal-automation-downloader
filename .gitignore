@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+
+# Environment variables & secrets
+.env
+.env.*
+cookies.txt
+*cookies*.txt
+*.png
+
+# Runtime data (NEVER commit)
+state.json
+users.json
+reminders.json
+jobs.json
+channel_seen_posts.json
+.agents/
+downloads/
+
+# Logs (unbounded growth — never track)
+bot.log
+*.log
+
+# IDEs & editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS files
+.DS_Store
+Thumbs.db
