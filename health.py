@@ -33,6 +33,14 @@ def get_system_uptime_seconds(uptime_path="/proc/uptime"):
                 content = f.read().strip()
                 if content:
                     return float(content.split()[0])
+    except PermissionError:
+        if uptime_path == "/proc/uptime" and hasattr(time, "clock_gettime"):
+            try:
+                clk = getattr(time, "CLOCK_BOOTTIME", getattr(time, "CLOCK_MONOTONIC", None))
+                if clk is not None:
+                    return float(time.clock_gettime(clk))
+            except Exception:
+                pass
     except Exception:
         pass
 

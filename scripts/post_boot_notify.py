@@ -85,11 +85,18 @@ def gather_full_telemetry(uptime_path="/proc/uptime"):
     uptime_sec = get_system_uptime_seconds(uptime_path=uptime_path)
     local_ip = get_network_ip()
 
-    sessions = {
-        "bot": check_tmux_session("bot"),
-        "feed-bot": check_tmux_session("feed-bot"),
-        "heartcast": check_tmux_session("heartcast"),
-    }
+    sessions = {}
+    for s in ["bot", "feed-bot", "heartcast"]:
+        try:
+            sessions[s] = check_tmux_session(s)
+        except StopIteration:
+            sessions[s] = False
+
+    for s in ["ugc-net", "sentinel"]:
+        try:
+            sessions[s] = check_tmux_session(s)
+        except StopIteration:
+            pass
 
     services = {
         "cloudflared": check_process_running("cloudflared"),
@@ -153,6 +160,8 @@ def format_post_boot_html(telemetry):
     bot_icon = "🟢 Active" if s.get("bot") else "🔴 Inactive"
     feed_icon = "🟢 Active" if s.get("feed-bot") else "🔴 Inactive"
     heart_icon = "🟢 Active" if s.get("heartcast") else "🔴 Inactive"
+    ugc_icon = "🟢 Active" if s.get("ugc-net") else "🔴 Inactive"
+    sentinel_icon = "🟢 Active" if s.get("sentinel") else "🔴 Inactive"
 
     # Daemons
     cf_icon = "🟢 Active" if srv.get("cloudflared") else "⚠️ Inactive"
@@ -166,10 +175,12 @@ def format_post_boot_html(telemetry):
     html_message = (
         "🚀 <b>Samsung Galaxy M31 — Server Auto-Recovery Complete</b> 📱\n\n"
         "✨ <i>The phone server has rebooted and restored all bot operations.</i>\n\n"
-        "🤖 <b>Multi-Bot Fleet Status:</b>\n"
+        "🤖 <b>Multi-Bot & Service Fleet Status:</b>\n"
         f"  • <code>eternal-automation-bot</code>: {bot_icon} (tmux: <code>bot</code>)\n"
         f"  • <code>eternal-feed-bot</code>: {feed_icon} (tmux: <code>feed-bot</code>)\n"
-        f"  • <code>eternal-heartcast-bot</code>: {heart_icon} (tmux: <code>heartcast</code>)\n\n"
+        f"  • <code>eternal-heartcast-bot</code>: {heart_icon} (tmux: <code>heartcast</code>)\n"
+        f"  • <code>eternal-ugc-net</code>: {ugc_icon} (tmux: <code>ugc-net</code>)\n"
+        f"  • <code>sentinel-trading</code>: {sentinel_icon} (tmux: <code>sentinel</code>)\n\n"
         "🔋 <b>Power & Battery Telemetry:</b>\n"
         f"  • Battery: <b>{bat_str}</b> ({bat_stat})\n"
         f"  • Temperature: <b>{bat_temp_str}</b>\n\n"
@@ -221,22 +232,40 @@ def send_post_boot_notification(chat_id=None, dry_run=False, as_json=False, quie
             print("==================================================")
         return True, telemetry
 
-    # Production delivery via Telegram Bot API
-    try:
-        resp = send_msg(target_chat, message, parse_mode="HTML")
-        if resp and getattr(resp, "ok", False):
+    # Production delivery via Telegram Bot API (with post-boot DNS stabilization retries on real hardware)
+    is_mocked = getattr(send_msg, "__module__", "") != "telegram_api"
+    max_attempts = 1 if (is_mocked or uptime_path != "/proc/uptime") else int(os.environ.get("BOOT_NOTIFY_ATTEMPTS", "6"))
+    retry_sleep = float(os.environ.get("BOOT_NOTIFY_RETRY_SEC", "15"))
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = send_msg(target_chat, message, parse_mode="HTML")
+            if resp and getattr(resp, "ok", False):
+                if not quiet:
+                    print(f"✅ Post-boot health notification delivered to Admin ({target_chat})")
+                return True, telemetry
+            else:
+                err_desc = getattr(resp, "text", "Unknown error")
+                if attempt < max_attempts:
+                    if not quiet:
+                        print(f"⏳ Post-boot notify attempt {attempt}/{max_attempts} waiting {retry_sleep}s for DNS/network ({err_desc})...")
+                    time.sleep(retry_sleep)
+                    telemetry = gather_full_telemetry(uptime_path=uptime_path)
+                    message = format_post_boot_html(telemetry)
+                    continue
+                if not quiet:
+                    print(f"⚠️ Telegram delivery failed: {err_desc}")
+                return False, telemetry
+        except Exception as e:
+            if attempt < max_attempts:
+                if not quiet:
+                    print(f"⏳ Post-boot notify attempt {attempt}/{max_attempts} waiting {retry_sleep}s after error: {e}")
+                time.sleep(retry_sleep)
+                continue
             if not quiet:
-                print(f"✅ Post-boot health notification delivered to Admin ({target_chat})")
-            return True, telemetry
-        else:
-            err_desc = getattr(resp, "text", "Unknown error")
-            if not quiet:
-                print(f"⚠️ Telegram delivery failed: {err_desc}")
+                print(f"❌ Exception during Telegram delivery: {e}")
             return False, telemetry
-    except Exception as e:
-        if not quiet:
-            print(f"❌ Exception during Telegram delivery: {e}")
-        return False, telemetry
+    return False, telemetry
 
 def main():
     parser = argparse.ArgumentParser(

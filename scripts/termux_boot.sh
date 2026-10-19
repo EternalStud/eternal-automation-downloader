@@ -54,19 +54,7 @@ else
     echo "ℹ️ sshd binary not installed in PATH. Skipping."
 fi
 
-# 3.2. Ensure Cloudflare Tunnel Daemon is Running
-echo "☁️ Checking Cloudflare Tunnel (cloudflared)..."
-if pgrep cloudflared >/dev/null 2>&1; then
-    echo "✅ cloudflared is already running."
-elif [ -f "$HOME/.cloudflared/token" ] && command -v cloudflared >/dev/null 2>&1; then
-    echo "☁️ Starting cloudflared tunnel daemon..."
-    nohup cloudflared tunnel run --token-file "$HOME/.cloudflared/token" >> "$HOME/cloudflared.log" 2>&1 &
-    echo "✅ cloudflared daemon started."
-else
-    echo "ℹ️ cloudflared token or binary not found. Skipping."
-fi
-
-# 4. Layered 4-Tier Network Connectivity Poller (120s timeout)
+# 4. Layered 4-Tier Network Connectivity Poller (180s timeout)
 check_tier1_socket() {
     # Tier 1: Socket level raw IP check (1.1.1.1:53 or 8.8.8.8:53)
     (timeout 2 bash -c 'cat < /dev/null > /dev/tcp/1.1.1.1/53' 2>/dev/null) || \
@@ -105,12 +93,12 @@ check_tier4_ping() {
 
 poll_network() {
     echo "📡 [4-Tier Network Poller] Waiting for network connectivity..."
-    MAX_WAIT="${BOOT_NETWORK_TIMEOUT:-120}"
+    MAX_WAIT="${BOOT_NETWORK_TIMEOUT:-180}"
     WAITED=0
     ONLINE=0
 
     # If mock network mode is active for offline testing
-    if [ "$BOOT_MOCK_NETWORK" = "offline" ]; then
+    if [ "${BOOT_MOCK_NETWORK:-}" = "offline" ]; then
         echo "⏳ [Mock Mode] Simulating offline network..."
         sleep "$MAX_WAIT"
         echo "⚠️ Network wait timed out after ${MAX_WAIT}s. Proceeding with service startup."
@@ -118,7 +106,11 @@ poll_network() {
     fi
 
     while [ "$WAITED" -lt "$MAX_WAIT" ]; do
-        if check_tier1_socket || check_tier2_dns || check_tier3_http || check_tier4_ping; then
+        if (check_tier1_socket || check_tier4_ping) && (check_tier2_dns || check_tier3_http); then
+            echo "✅ Network is ONLINE (Waited ${WAITED}s)"
+            ONLINE=1
+            break
+        elif check_tier2_dns || check_tier3_http || check_tier1_socket || check_tier4_ping; then
             echo "✅ Network is ONLINE (Waited ${WAITED}s)"
             ONLINE=1
             break
@@ -134,6 +126,18 @@ poll_network() {
 }
 
 poll_network
+
+# 4.1. Ensure Cloudflare Tunnel Daemon is Running (Started AFTER network is confirmed online)
+echo "☁️ Checking Cloudflare Tunnel (cloudflared)..."
+if pgrep cloudflared >/dev/null 2>&1; then
+    echo "✅ cloudflared is already running."
+elif [ -f "$HOME/.cloudflared/token" ] && command -v cloudflared >/dev/null 2>&1; then
+    echo "☁️ Starting cloudflared tunnel daemon..."
+    nohup cloudflared tunnel run --token-file "$HOME/.cloudflared/token" >> "$HOME/cloudflared.log" 2>&1 &
+    echo "✅ cloudflared daemon started."
+else
+    echo "ℹ️ cloudflared token or binary not found. Skipping."
+fi
 
 # 5. Clean Orphaned .lock and .tmp Files
 echo "🧹 Cleaning orphaned lock and temporary files..."
@@ -159,8 +163,8 @@ rm -f "$BOT_BASE"/eternal-*/.*.tmp 2>/dev/null || true
 rm -f "$HOME/.shutdown_in_progress" 2>/dev/null || true
 echo "✅ Stale lock & temp cleanup complete."
 
-# 6. Spawn Multi-Bot Tmux Sessions
-echo "🤖 Spawning multi-bot tmux sessions..."
+# 6. Spawn Multi-Bot & Web App Tmux Sessions
+echo "🤖 Spawning multi-bot tmux & web app sessions..."
 spawn_bot_session() {
     local session_name="$1"
     local bot_dir="$2"
@@ -184,9 +188,28 @@ spawn_bot_session() {
 }
 
 if command -v tmux >/dev/null 2>&1; then
+    # 6.1 Automation Bot
     spawn_bot_session "bot" "$BOT_BASE/eternal-automation-bot" "bash start.sh"
+
+    # 6.2 Feed Bot
     spawn_bot_session "feed-bot" "$BOT_BASE/eternal-feed-bot" "bash start.sh"
+
+    # 6.3 Heartcast Bot
     spawn_bot_session "heartcast" "$BOT_BASE/eternal-heartcast-bot" "bash start.sh"
+
+    # 6.4 ConceptForge Web App (UGC NET Prep Platform)
+    if tmux has-session -t ugc-net 2>/dev/null; then
+        echo "ℹ️ Tmux session 'ugc-net' is already active."
+    elif tmux has-session -t server 2>/dev/null; then
+        echo "ℹ️ Legacy/Manual tmux session 'server' is already active."
+    else
+        spawn_bot_session "ugc-net" "$BOT_BASE/eternal-ugc-net" "python3 server.py 8000"
+    fi
+
+    # 6.5 Sentinel Alpha F&O Trading Engine (Autonomous 24/7 Market Scheduler)
+    SENTINEL_DIR="$BOT_BASE/PROJECT/eternal_sentinel-alpha-fno-trading"
+    [ ! -d "$SENTINEL_DIR" ] && SENTINEL_DIR="/data/data/com.termux/files/home/PROJECT/eternal_sentinel-alpha-fno-trading"
+    spawn_bot_session "sentinel" "$SENTINEL_DIR" "bash scripts/start_sentinel.sh --daemon"
 else
     echo "ℹ️ tmux command not found in PATH. Skipping tmux session spawning."
 fi
@@ -198,7 +221,7 @@ if [ ! -f "$POST_NOTIFY_SCRIPT" ] && [ -f "$REPO_DIR/scripts/post_boot_notify.py
     POST_NOTIFY_SCRIPT="$REPO_DIR/scripts/post_boot_notify.py"
 fi
 
-if [ "$BOOT_SKIP_NOTIFY" != "1" ] && [ -f "$POST_NOTIFY_SCRIPT" ]; then
+if [ "${BOOT_SKIP_NOTIFY:-0}" != "1" ] && [ -f "$POST_NOTIFY_SCRIPT" ]; then
     PY_BIN="python3"
     command -v python3 >/dev/null 2>&1 || PY_BIN="python"
     $PY_BIN "$POST_NOTIFY_SCRIPT" 2>&1 || echo "⚠️ Warning: post_boot_notify.py exited with non-zero code."

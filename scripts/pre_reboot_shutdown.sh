@@ -17,7 +17,7 @@ DB_ERROR=0
 
 SENTINEL_FILE="${SHUTDOWN_SENTINEL:-$HOME/.shutdown_in_progress}"
 LOG_FILE="${SHUTDOWN_LOG:-$HOME/shutdown.log}"
-TMUX_SESSIONS=("bot" "feed-bot" "heartcast")
+TMUX_SESSIONS=("bot" "feed-bot" "heartcast" "ugc-net" "sentinel")
 
 # Parse CLI Arguments
 print_usage() {
@@ -241,6 +241,17 @@ for bdir in "${BOT_DIRS[@]}"; do
         fi
     fi
 done
+
+# Also checkpoint Sentinel SQLite WAL database if present
+SENTINEL_DB="$HOME/PROJECT/eternal_sentinel-alpha-fno-trading/data/sentinel.db"
+if [[ -f "$SENTINEL_DB" ]] && command -v python3 >/dev/null 2>&1; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        log "🔍 [Dry Run] Would execute SQLite WAL checkpoint on $SENTINEL_DB"
+    else
+        log "📦 Executing SQLite WAL checkpoint: $SENTINEL_DB"
+        python3 -c "import sqlite3, sys; con = sqlite3.connect(sys.argv[1]); con.execute('PRAGMA wal_checkpoint(TRUNCATE);'); con.close()" "$SENTINEL_DB" >/dev/null 2>&1 || true
+    fi
+fi
 
 # Step 4: Purge Transient Files, Orphaned Downloads, and Locks
 log "🧹 Purging orphaned temporary files, partial downloads, and lock files..."
